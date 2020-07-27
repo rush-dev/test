@@ -1,0 +1,22 @@
+version: 0.0
+os: linux
+files:
+  - source: /deployment-apps
+    destination: /opt/splunk/etc/deployment-apps
+
+hooks:
+  AfterInstall:
+    - location: scripts/perms.sh
+      timeout: 300
+      runas: root
+  BeforeInstall:
+    - location: scripts/back_up.sh
+      timeout: 300
+      runas: root
+#    - location: scripts/start_server
+#      timeout: 300
+#      runas: root
+#  ApplicationStop:
+#    - location: scripts/stop_server
+#      timeout: 300
+#      runas: root
