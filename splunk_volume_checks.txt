@@ -1,0 +1,38 @@
+#!/bin/bash
+# chkconfig: 345 10 10
+# Description: after instance start/stop check to make sure NVME drive is mounted, if not remount.
+#
+
+volume_check_start() {
+  mount=$(df -h | grep run | awk '{print $6}')
+  if [[ $mount != *"splunk_cache"* ]];
+  then
+    # Create splunk cache manager volume
+    pvcreate /dev/nvme2n1 /dev/nvme3n1
+    pvdisplay
+    echo "Physical Volume Create"
+
+    vgcreate splunk_storage /dev/nvme2n1 /dev/nvme3n1
+    vgdisplay
+    echo "Volume Group Created"
+
+    lvcreate -l 90%FREE -n splunk_cache splunk_storage
+    lvdisplay
+    echo "Logical Volume Created"
+
+    # Set fs format
+    mkfs.xfs /dev/splunk_storage/splunk_cache
+
+    # Create directory if doesnt exist and chown to splunk
+    [[ -d /opt/splunk_cache ]] || mkdir /opt/splunk_cache && chown -R splunk: /opt/splunk_cache
+
+    # Mount volume
+    mount /opt/splunk_cache
+    echo "Splunk cache mounted"
+  fi
+}
+
+case "$1" in
+ start)
+   volume_check_start;;
+esac
