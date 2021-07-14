@@ -1,0 +1,185 @@
+#!/bin/bash
+
+hostname=$(hostname)
+SPLUNK_STATUS=$(sudo -u splunk /opt/splunk/bin/splunk status)
+CM_PASS=0
+
+# For cluster master when starting
+
+if [[ $hostname  == *"splunk-cm"* ]];
+then
+	echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Cluster Master health checks running"
+	
+	if [[ $SPLUNK_STATUS  == "splunkd is running"* ]];
+	then
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunkd is running on cluster master"
+		CM_MAINTENANCE_MODE=$(sudo -u splunk /opt/splunk/bin/splunk show maintenance-mode -auth admin:password | awk '{print $1,$2,$3,$4,$5}')
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | $CM_MAINTENANCE_MODE"
+		IDX_STATUS=$(sudo -u splunk /opt/splunk/bin/splunk show cluster-bundle-status | grep -e splunk -e last_bundle_validation_status -e status=U -e status=D)
+		
+		if [[ `netstat -ant | grep 8089` == *":8089"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk web management port is listening on 8089"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk web management port is not listening on 8089"
+		fi
+		
+		if [[ `netstat -ant | grep 9997` == *":9997"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk forwarding port is sending on 9997"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk forwarding port is not sending on 9997"
+		fi
+		
+		if [[ `netstat -ant | grep 8000` == *":8000"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk webserver port is listening on 8000"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk webserver port is not listening on 8000"
+		fi
+		
+		if [[ "$IDX_STATUS" == *"Up"* &&"$IDX_STATUS" == *"last_bundle_validation_status=success"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Indexers are up and bundles validated"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Check indexer status and validate splunkd is running"
+		fi
+		
+	else
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunkd is not running on cluster master"
+		exit 1
+	fi
+fi
+
+# Search Heads
+
+if [[ $hostname  == *"splunk-sh"* ]];
+then
+	echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Search Head health checks running"
+	
+	if [[ $SPLUNK_STATUS  == "splunkd is running"* ]];
+	then
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunkd is running on search head"
+		SHC_STATUS=$(sudo -u splunk /opt/splunk/bin/splunk show shcluster-status -auth admin:password | awk '{print $1,$2,$3}')
+		
+		if [[ "$SHC_STATUS" == *"status : Up"* && "$SHC_STATUS" == *"service_ready_flag : 1"* && "$SHC_STATUS" == *"min_peers_joined_flag : 1"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk Search Head cluster is up, in a service ready state, and has the minium peers joined"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk web management port is not listening on 8089"
+		fi
+		
+		if [[ `netstat -ant | grep 8089` == *":8089"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk web management port is listening on 8089"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk web management port is not listening on 8089"
+		fi
+		
+		if [[ `netstat -ant | grep 9997` == *":9997"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk forwarding port is sending on 9997"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk forwarding port is not sending on 9997"
+		fi
+		
+		if [[ `netstat -ant | grep 8000` == *":8000"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk webserver port is listening on 8000"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk webserver port is not listening on 8000"
+		fi
+		
+		if [[ `netstat -ant | grep 8191` == *":8191"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk KV Store port is listening on 8191"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk KV Store port is not listening on 8191"
+		fi
+		
+	else
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunkd is not running on cluster master"
+		exit 1
+	fi
+fi
+
+# Indexers
+
+if [[ $hostname  == *"splunk-indexer"* ]];
+then
+	echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Indexer health checks running"
+	
+	if [[ $SPLUNK_STATUS  == "splunkd is running"* ]];
+	then
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunkd is running on indexer"
+				
+		if [[ `netstat -ant | grep 8089` == *":8089"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk web management port is listening on 8089"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk web management port is not listening on 8089"
+		fi
+		
+		if [[ `netstat -ant | grep 9997` == *":9997"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk forwarding port is listening on 9997"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk forwarding port is not listening on 9997"
+		fi
+		
+		if [[ `netstat -ant | grep 8000` == *":8000"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk webserver port is listening on 8000"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk webserver port is not listening on 8000"
+		fi
+		
+		if [[ `netstat -ant | grep 9887` == *":9887"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk webserver port is listening on 9887"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk webserver port is not listening on 9887"
+		fi
+		
+	else
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunkd is not running on cluster master"
+		exit 1
+	fi
+fi
+
+# Heavy Forwarders
+
+if [[ $hostname  == *"splunk-hfs"* ]];
+then
+	echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Heavy Forwarder health checks running"
+	
+	if [[ $SPLUNK_STATUS  == "splunkd is running"* ]];
+	then
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunkd is running on Heavy Forwarder"
+				
+		if [[ `netstat -ant | grep 8089` == *":8089"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk web management port is listening on 8089"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk web management port is not listening on 8089"
+		fi
+		
+		if [[ `netstat -ant | grep 9997` == *":9997"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk forwarding port is listening on 9997"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk forwarding port is not listening on 9997"
+		fi
+		
+		if [[ `netstat -ant | grep 8000` == *":8000"* ]];
+		then
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} INFO | Splunk webserver port is listening on 8000"
+		else
+			echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunk webserver port is not listening on 8000"
+		fi
+		
+	else
+		echo "`date +'%Y-%m-%dT%H:%M:%S %Z'` ${hostname} ERROR | Splunkd is not running on cluster master"
+		exit 1
+	fi
+fi
