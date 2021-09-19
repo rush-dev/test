@@ -1,0 +1,330 @@
+<form theme="dark">
+  <init>
+    <set token="splunkd_running_total">0</set>
+  </init>
+  <label>Health Overview</label>
+  <description>Health Overview</description>
+  <fieldset submitButton="false" autoRun="false">
+    <input type="dropdown" token="view">
+      <label>Views</label>
+      <choice value="1">User Activity</choice>
+      <choice value="2">TCP Output</choice>
+      <choice value="3">Errors</choice>
+      <choice value="4">Concurrency</choice>
+      <default>1</default>
+      <change>
+        <condition match="match(value, &quot;1&quot;)">
+          <set token="ua"></set>
+          <unset token="tcpout"></unset>
+          <unset token="errors"></unset>
+          <unset token="concurrency"></unset>
+        </condition>
+        <condition match="match(value, &quot;2&quot;)">
+          <set token="tcpout"></set>
+          <unset token="ua"></unset>
+          <unset token="errors"></unset>
+          <unset token="concurrency"></unset>
+        </condition>
+        <condition match="match(value, &quot;3&quot;)">
+          <set token="errors"></set>
+          <unset token="ua"></unset>
+          <unset token="tcpout"></unset>
+          <unset token="concurrency"></unset>
+        </condition>
+        <condition match="match(value, &quot;4&quot;)">
+          <set token="concurrency"></set>
+          <unset token="errors"></unset>
+          <unset token="ua"></unset>
+          <unset token="tcpout"></unset>
+        </condition>
+      </change>
+    </input>
+    <input type="time" token="timepicker">
+      <label></label>
+      <default>
+        <earliest>-15m</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+  </fieldset>
+  <row depends="$concurrency$">
+    <panel>
+      <table>
+        <title>Concurrency</title>
+        <search>
+          <query>| rest splunk_server=* /servicesNS/-/-/saved/searches preserve_args_case=t noProxy=t search="is_scheduled=1" search="disabled=0"
+            | stats count by splunk_server
+            | join splunk_server type=outer [
+              | rest splunk_server="*" /services/server/status/limits/search-concurrency
+              | fields splunk_server max_hist_scheduled_searches, max_rt_scheduled_searches]
+            | join splunk_server type=outer [
+              | rest splunk_server="*" /services/server/status/resource-usage/splunk-processes
+              | search search_props.role="head"
+              | dedup search_props.sid
+              | stats count(eval('search_props.mode'=="historical batch" OR 'search_props.mode'=="historical")) as count_hist_search, count(eval('search_props.mode'=="RT" OR 'search_props.mode'=="RT indexed")) as count_rt_search by splunk_server ]
+            | join splunk_server type=outer [
+              | rest splunk_server="*" /services/server/info
+              | fields splunk_server, numberOfCores, numberOfVirtualCores]
+            | eval core_info = if(isnull(numberOfCores), "N/A", numberOfCores)." / ".if(isnull(numberOfVirtualCores), "N/A", numberOfVirtualCores)
+            | eval count_hist_search = if(isnull(count_hist_search), 0, count_hist_search)
+            | eval count_rt_search = if(isnull(count_rt_search), 0, count_rt_search)
+            | eval hist_concur_vs_limit = count_hist_search." / ".max_hist_scheduled_searches
+            | eval rt_concur_vs_limit = count_rt_search." / ".max_rt_scheduled_searches
+            | fields splunk_server, core_info, hist_concur_vs_limit, rt_concur_vs_limit, count
+            | rename splunk_server as Instance, core_info AS "CPU Cores (Physical / Virtual)", hist_concur_vs_limit as "Concurrency of Historical Scheduled Report (Running/Limit)", rt_concur_vs_limit as "Concurrency of Real-time Scheduled Report (Running/Limit)", count as "Unique Scheduled Reports"</query>
+          <earliest>$timepicker.earliest$</earliest>
+          <latest>$timepicker.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row depends="$errors$">
+    <panel>
+      <chart>
+        <title>Errors by Host</title>
+        <search>
+          <query>index=_internal log_level=ERROR
+| timechart count by host span=5m</query>
+          <earliest>$timepicker.earliest$</earliest>
+          <latest>$timepicker.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row depends="$tcpout$">
+    <panel>
+      <chart>
+        <title>TCP Output Queue</title>
+        <search>
+          <query>| tstats count where index=_internal by _time, host, PREFIX(current_size=), PREFIX(max_size=), PREFIX(group=) span=1s
+| search "group="=queue
+| eval output_queue_pct=('current_size=' / 'max_size=') * 100
+| timechart perc95(output_queue_pct) by host
+| eval Bad=80</query>
+          <earliest>$timepicker.earliest$</earliest>
+          <latest>$timepicker.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row depends="$ua$">
+    <panel>
+      <chart>
+        <title>User Activity</title>
+        <search>
+          <query>index=_audit  NOT user="n/a" NOT user="splunk-system-user" NOT "scheduler__nobody__search" NOT user=nobody
+| timechart count by user span=5m</query>
+          <earliest>$timepicker.earliest$</earliest>
+          <latest>$timepicker.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel id="first">
+      <table>
+        <title>Splunkd Running</title>
+        <search>
+          <query>| rest splunk_server=* /services/server/status/resource-usage/splunk-processes
+| search process=*
+| stats count values(process) as process by splunk_server
+| fields - count
+| rename splunk_server as "Splunk Server"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+    <panel id="second">
+      <table>
+        <title>Average EPS - 7 Days</title>
+        <search>
+          <query>| tstats count where index=_* by index _time span=1d
+| stats avg(count) as avg by _time
+| eval avg=round(avg/24/60/60, 3)
+| sort - avg
+| rename avg as "Average EPS"</query>
+          <earliest>-7d@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="dataOverlayMode">highlow</option>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+    <panel id="third">
+      <table>
+        <title>Indexes &amp; Retentions</title>
+        <search>
+          <query>| rest splunk_server=* /services/data/indexes
+| eval retentionInDays=frozenTimePeriodInSecs/86400
+| stats count by title retentionInDays
+| sort - retentionInDays
+| fields - count</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel id="forth">
+      <table>
+        <title>Check ulimits</title>
+        <search>
+          <query>| rest splunk_server=* /services/server/info
+| join type=outer splunk_server [rest splunk_server=* /services/server/sysinfo | fields splunk_server ulimits.data_segment_size ulimits.open_files ulimits.user_processes] 
+| eval ulimits.data_segment_size = if(isnotnull('ulimits.data_segment_size'), 'ulimits.data_segment_size', "unavailable") 
+| eval ulimits.open_files = if(isnotnull('ulimits.open_files'), 'ulimits.open_files', "unavailable") 
+| eval ulimits.user_processes = if(isnotnull('ulimits.user_processes'), 'ulimits.user_processes', "unavailable") 
+| eval sev_segment_size = case('ulimits.data_segment_size' == -1 OR 'ulimits.data_segment_size' &gt;= 1073741824, 0, 'ulimits.data_segment_size' == "unavailable", -1, True(), 2) 
+| eval sev_open_files = case('ulimits.open_files' == -1 OR 'ulimits.open_files' &gt;= 64000, 0, 'ulimits.open_files' == "unavailable", -1, True(), 2) 
+| eval sev_user_processes = case('ulimits.user_processes' == -1 OR 'ulimits.user_processes' &gt;= 16000, 0, 'ulimits.user_processes' == "unavailable", -1, True(), 2) 
+| eval severity_level = max(sev_segment_size, sev_open_files, sev_user_processes) 
+| fields splunk_server ulimits.data_segment_size ulimits.open_files ulimits.user_processes severity_level 
+| rename splunk_server AS instance ulimits.data_segment_size AS "ulimits.data_segment_size (current / recommended)" ulimits.open_files AS "ulimits.open_files (current / recommended)" ulimits.user_processes AS "ulimits.user_processes (current / recommended)" 
+| fieldformat ulimits.data_segment_size (current / recommended) = (if('ulimits.data_segment_size (current / recommended)' &gt;= 0, 'ulimits.data_segment_size (current / recommended)', 'ulimits.data_segment_size (current / recommended)'))." / 1073741824" 
+| fieldformat ulimits.open_files (current / recommended) = (if('ulimits.open_files (current / recommended)' &gt;= 0, 'ulimits.open_files (current / recommended)', 'ulimits.open_files (current / recommended)'))." / 64000" 
+| fieldformat ulimits.user_processes (current / recommended) = (if('ulimits.user_processes (current / recommended)' &gt;= 0, 'ulimits.user_processes (current / recommended)', 'ulimits.user_processes (current / recommended)'))." / 16000" 
+| fields - _timediff, severity_level</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">cell</option>
+        <format type="color" field="ulimits.open_files (current / recommended)">
+          <colorPalette type="expression">if (like(value,"%64000 / 64000%"),"#247bc1", "#FF5733")</colorPalette>
+        </format>
+        <format type="color" field="ulimits.user_processes (current / recommended)">
+          <colorPalette type="expression">if (like(value,"%16000 / 16000%"),"#247bc1", "#FF5733")</colorPalette>
+        </format>
+        <format type="color" field="ulimits.data_segment_size (current / recommended)">
+          <colorPalette type="expression">if (like(value,"%-1%") OR like(value,"%1073741824%"),"#247bc1", "#FF5733")</colorPalette>
+        </format>
+      </table>
+    </panel>
+    <panel id="fifth">
+      <table>
+        <title>Transparent Huge Pages (THP)</title>
+        <search>
+          <query>| rest splunk_server=* /services/server/info 
+| join type=outer splunk_server [rest splunk_server=* /services/server/sysinfo | fields splunk_server transparent_hugepages.*] 
+| eval transparent_hugepages.effective_state = if(isnotnull('transparent_hugepages.effective_state'), 'transparent_hugepages.effective_state', "unknown") 
+| eval transparent_hugepages.enabled = case(len('transparent_hugepages.enabled') &gt; 0, 'transparent_hugepages.enabled', 'transparent_hugepages.effective_state' == "ok" AND (isnull('transparent_hugepages.enabled') OR len('transparent_hugepages.enabled') = 0), "feature not available", 'transparent_hugepages.effective_state' == "unknown" AND isnull('transparent_hugepages.enabled'), "unknown", True(), "unknown") 
+| eval transparent_hugepages.defrag = case(len('transparent_hugepages.defrag') &gt; 0, 'transparent_hugepages.defrag', 'transparent_hugepages.effective_state' == "ok" AND (isnull('transparent_hugepages.defrag') OR len('transparent_hugepages.defrag') = 0), "feature not available", 'transparent_hugepages.effective_state' == "unknown" AND isnull('transparent_hugepages.defrag'), "unknown", True(), "unknown") 
+| eval severity_level = case('transparent_hugepages.effective_state' == "unavailable", -1, 'transparent_hugepages.effective_state' == "ok", 0, 'transparent_hugepages.effective_state' == "unknown", 1, 'transparent_hugepages.effective_state' == "bad", 2) 
+| fields splunk_server transparent_hugepages.enabled transparent_hugepages.defrag transparent_hugepages.effective_state severity_level 
+| rename splunk_server AS instance 
+| fields - _timediff, severity_level
+| rename transparent_hugepages.effective_state as state, transparent_hugepages.enabled as thp.enabled, transparent_hugepages.defrag as thp.defrag</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">cell</option>
+        <format type="color" field="state">
+          <colorPalette type="expression">if (like(value,"%bad%"),"#FF5733","#247bc1")</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Disk Utilization and IOPS</title>
+        <search>
+          <query>| rest splunk_server=* /services/server/status/partitions-space
+| eval free = if(isnotnull(available), available, free)
+| eval usage = round((capacity - free) / 1024, 2)
+| eval capacity = round(capacity / 1024, 2)
+| eval compare_usage = usage. " / " .capacity
+| eval pct_usage = round(usage / capacity * 100, 2)
+| stats first(fs_type) as fs_type, first(compare_usage) as compare_usage, first(pct_usage) as pct_usage by splunk_server, mount_point
+| join type=left [| rest splunk_server=* /services/server/status/resource-usage/iostats
+  | eval iops = round(reads_ps + writes_ps)
+  | eval iops_mountpoint = iops." (".mount_point.")"
+  | eval cpupct_mountpoint = cpu_pct."% (".mount_point.")"
+  | stats values(iops_mountpoint) as iops_mountpoint, values(cpupct_mountpoint) as cpupct_mountpoint by splunk_server]
+| rename mount_point as "Mount Point", compare_usage as "Disk Usage (GB)", capacity as "Capacity (GB)", pct_usage as "Disk Usage (%)", splunk_server as "Splunk Server", fs_type as "File System Type", iops_mountpoint as "I/O Operations per second (Mount Point)", cpupct_mountpoint as "I/O Bandwidth Utilization (Mount Point)"
+| sort - "Disk Usage (%)"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">cell</option>
+        <option name="totalsRow">false</option>
+        <format type="color" field="Disk Usage (%)">
+          <colorPalette type="minMidMax" maxColor="#D6563C" minColor="#FFFFFF"></colorPalette>
+          <scale type="minMidMax" maxValue="90" minValue="10"></scale>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <table>
+        <title>CPU and Memory Utilization</title>
+        <search>
+          <query>| rest splunk_server=* /services/server/status/resource-usage/hostwide
+| eval cpu_count = if(isnull(cpu_count), "N/A", cpu_count)
+| eval cpu_usage = cpu_system_pct + cpu_user_pct
+| eval mem_used_pct = round(mem_used / mem * 100, 2)
+| eval mem_used = round(mem_used, 0)
+| eval mem = round(mem, 0)
+| eval mem_gb = (mem / 1000)
+| eval mem = mem + " / " + mem_gb
+| eval mem_used_gb = (mem_used / 1000)
+| eval mem_used = mem_used + " / " + mem_used_gb
+| fields splunk_server, cpu_count, cpu_usage, mem, mem_used, mem_used_pct 
+| sort - cpu_usage, - mem_used
+| rename splunk_server as "Splunk Server", cpu_count as "CPU Cores", cpu_usage as "CPU Usage (%)", mem as "Physical Memory Capacity (MB/GB)", mem_used as "Physical Memory Used (MB/GB)", mem_used_pct as "Physical Memory Usage (%)"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="Physical Memory Usage (%)">
+          <colorPalette type="minMidMax" maxColor="#D6563C" minColor="#FFFFFF"></colorPalette>
+          <scale type="minMidMax" maxValue="90" minValue="10"></scale>
+        </format>
+        <format type="color" field="CPU Usage (%)">
+          <colorPalette type="minMidMax" maxColor="#D6563C" minColor="#FFFFFF"></colorPalette>
+          <scale type="minMidMax" maxValue="90" minValue="10"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row depends="$alwaysHideHTMLStyle$">
+    <panel>
+      <html>
+        <style>
+          #first {
+            width: 10% !important;
+          }
+          #second {
+            width: 15% !important;
+          }
+          #third {
+            width: 15% !important;
+          }
+          #forth {
+            width: 35% !important;
+          }
+          #fifth {
+            width: 25% !important;
+          }
+         </style>
+       </html>
+    </panel>
+  </row>
+</form>
